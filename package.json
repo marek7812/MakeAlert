@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "canvas": "^3.2.3",
+    "chart.js": "^4.6.1",
+    "discord.js": "^14.28.1",
+    "eslint": "^10.14.0",
+    "node-cron": "^4.6.0",
+    "playwright": "^1.65.0"
+  },
+  "allowScripts": {
+    "canvas@3.2.3": true,
+    "puppeteer@25.16.0": true
+  }
+}
