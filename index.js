@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Collection, Events, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, Events, REST, Routes, EmbedBuilder } = require('discord.js');
 const cron = require('node-cron');
 const Database = require('better-sqlite3');
+const { checkPrice } = require('./scraper.js');
 
 process.loadEnvFile();
 
@@ -86,7 +87,47 @@ client.once(Events.ClientReady, async () => {
 
     console.log(`Logged in as ${client.user.tag}`);
     cron.schedule('0 12 * * *', async () => {
-        console.log('\x1b[33m Prices will be checked daily at 12:00!\x1b[0m');
+        console.log('[CRON] Rozpoczynam cykliczne sprawdzanie cen...');
+        const alerts = db.prepare('SELECT * FROM alerts').all();
+
+        for (const alert of alerts) {
+            try {
+                const currentPrice = await checkPrice(alert.url, alert.selector);
+
+                if (!currentPrice) {
+                    console.log(`\x1b[31m[CRON] Nie udało się odczytać ceny dla: ${alert.name}\x1b[0m`);
+                    continue;
+                }
+
+                if (currentPrice !== alert.last_price) {
+                    const isDrop = currentPrice < alert.last_price;
+                    const status = isDrop ? '📉 Spadek ceny!' : '📈 Wzrost ceny!';
+                    const color = isDrop ? '#57F287' : '#ED4245';
+
+                    db.prepare('UPDATE alerts SET last_price = ? WHERE id = ?').run(currentPrice, alert.id);
+                    db.prepare('INSERT INTO price_history (alert_id, price) VALUES (?, ?)').run(alert.id, currentPrice);
+                    const user = await client.users.fetch(alert.user_id).catch(() => null);
+                    if (user) {
+                        const embed = new EmbedBuilder()
+                            .setTitle(status)
+                            .setColor(color)
+                            .addFields(
+                                { name: '🛒 Produkt', value: alert.name, inline: false },
+                                { name: 'Poprzednia cena', value: `~~${alert.last_price} zł~~`, inline: true },
+                                { name: 'Nowa cena', value: `**${currentPrice} zł**`, inline: true },
+                                { name: '🔗', value: `[Link](${alert.url})`, inline: false }
+                            )
+                            .setTimestamp();
+
+                        await user.send({ embeds: [embed] }).catch(err => console.error(`Błąd DM:`, err));
+                    }
+                } else {
+                }
+            } catch (err) {
+                console.log(`\x1b[31m[CRON] Błąd przy sprawdzaniu: ${alert.id}:\x1b[0m`, err.message);
+            }
+        }
+        console.log('[CRON] Cykl zakończony.');
     });
 });
 
