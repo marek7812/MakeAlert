@@ -1,4 +1,6 @@
-![MakeAlert Preview](att/readme.png)
+<p align="center">
+  <img src="att/readme.gif" alt="MakeAlert Preview">
+</p>
 
 # MakeAlert
 
