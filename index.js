@@ -87,7 +87,7 @@ client.once(Events.ClientReady, async () => {
 
     console.log(`Logged in as ${client.user.tag}`);
     cron.schedule('0 12 * * *', async () => {
-        console.log('[CRON] Rozpoczynam cykliczne sprawdzanie cen...');
+        console.log('[CRON] Starting price check...');
         const alerts = db.prepare('SELECT * FROM alerts').all();
 
         for (const alert of alerts) {
@@ -95,7 +95,7 @@ client.once(Events.ClientReady, async () => {
                 const currentPrice = await checkPrice(alert.url, alert.selector);
 
                 if (!currentPrice) {
-                    console.log(`\x1b[31m[CRON] Nie udało się odczytać ceny dla: ${alert.name}\x1b[0m`);
+                    console.log(`\x1b[31m[CRON] Failed to read price for: ${alert.name}\x1b[0m`);
                     continue;
                 }
 
@@ -119,15 +119,15 @@ client.once(Events.ClientReady, async () => {
                             )
                             .setTimestamp();
 
-                        await user.send({ embeds: [embed] }).catch(err => console.error(`Błąd DM:`, err));
+                        await user.send({ embeds: [embed] }).catch(err => console.error(`DM Error:`, err));
                     }
                 } else {
                 }
             } catch (err) {
-                console.log(`\x1b[31m[CRON] Błąd przy sprawdzaniu: ${alert.id}:\x1b[0m`, err.message);
+                console.log(`\x1b[31m[CRON] Error while checking: ${alert.id}:\x1b[0m`, err.message);
             }
         }
-        console.log('[CRON] Cykl zakończony.');
+        console.log('[CRON] Done');
     });
 });
 

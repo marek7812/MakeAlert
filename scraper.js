@@ -267,7 +267,7 @@ async function checkPrice(url, selector) {
         return null;
 
     } catch (e) {
-        console.error('Błąd sprawdzania ceny:', e.message);
+        console.error('Error while price checking:', e.message);
         return null;
     } finally {
         await browser.close();
