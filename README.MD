@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="att/readme.gif" alt="MakeAlert Preview">
+  <img src="att/readme.png" alt="Image">
 </p>
 
 # MakeAlert
