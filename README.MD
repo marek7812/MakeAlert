@@ -60,12 +60,12 @@ pm2 startup
 
 - **Expected terminal output**:
 ```text
-⏳ [CRON] Rozpoczynam sprawdzanie cen...
-Processing request for: https://www.example-store.pl/product/123
-✅ [CRON] Bez zmian: Procesor Ryzen 5 7600 X (709 zł)
-Processing request for: https://www.example-store.pl/product/456
-📉 CENA SPADŁA! Zanotowano zmianę ceny dla produktu: Obudowa PC
-✅ [CRON] Sprawdzanie zakończone.
+[CRON] Starting price check...
+Processing request for: https://www.example-store.pl/product/1232353452345235
+Done.
+Processing request for: https://www.example-store.pl/product/4561234555342345
+Done.
+[CRON] Done
 ```
  &nbsp;
 
