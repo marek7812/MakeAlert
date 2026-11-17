@@ -134,12 +134,14 @@ module.exports = {
 
             const { EmbedBuilder } = require('discord.js');
             const embeds = [];
+            const total = alerts.reduce((sum, a) => sum + (Number(a.last_price) || 0), 0).toFixed(2);
 
             for (let i = 0; i < alerts.length; i += 25) {
                 const currentBatch = alerts.slice(i, i + 25);
                 const embed = new EmbedBuilder()
                     .setTitle(`📋 Twoje aktywne alerty (Strona ${i+1}) 📋`)
-                    .setColor('#f9ffff')
+                    .setDescription(`Łączna wartość: **${total} zł**`)
+                    .setColor('#f9ffff');
 
                 currentBatch.forEach((a, index) => {
                     embed.addFields({

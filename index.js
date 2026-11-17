@@ -8,7 +8,7 @@ const { checkPrice } = require('./scraper.js');
 process.loadEnvFile();
 
 const db = new Database(path.join(__dirname, 'data.db'));
-db.pragma('journal_mode = WAL');
+db.pragma('journal_mode = DELETE');
 
 function initDB() {
     db.prepare(`
@@ -92,13 +92,33 @@ client.once(Events.ClientReady, async () => {
 
         for (const alert of alerts) {
             try {
-                const currentPrice = await checkPrice(alert.url, alert.selector);
+                const result = await checkPrice(alert.url, alert.selector, alert.name);
 
-                if (!currentPrice) {
-                    console.log(`\x1b[31m[CRON] Failed to read price for: ${alert.name}\x1b[0m`);
+                if (result.status === 'UNAVAILABLE') {
+                    const user = await client.users.fetch(alert.user_id).catch(() => null);
+                    if (user) {
+                        const embed = new EmbedBuilder()
+                            .setTitle('⚠️ Produkt niedostępny!') // Product unavailable
+                            .setColor('#FEE75C')
+                            .setDescription('Wybrany produkt jest niedostępny lub wyprzedany. Jeśli oferta wróci lub się znajdzie pod innym adresem to zaaktualizuj ją za pomocą `/alert aktualizuj` lub usuń za pomocą `/alert usun`')
+                            .addFields(
+                                { name: '🛒 Produkt', value: alert.name, inline: false },
+                                { name: '💰 Ostatnia cena', value: `**${alert.last_price} zł**`, inline: true },
+                                { name: '🔗', value: `[Link](${alert.url})`, inline: false }
+                            )
+                            .setTimestamp();
+
+                        await user.send({ embeds: [embed] }).catch(err => console.error(`DM Error:`, err));
+                    }
                     continue;
                 }
 
+                if (result.status !== 'OK' || !result.price) {
+                    console.log(`\x1b[31m[CRON] Failed to read price for: ${alert.name} (screenshot saved in log folder)\x1b[0m`);
+                    continue;
+                }
+
+                const currentPrice = result.price;
                 if (currentPrice !== alert.last_price) {
                     const isDrop = currentPrice < alert.last_price;
                     const status = isDrop ? '📉 Spadek ceny!' : '📈 Wzrost ceny!';
@@ -121,7 +141,6 @@ client.once(Events.ClientReady, async () => {
 
                         await user.send({ embeds: [embed] }).catch(err => console.error(`DM Error:`, err));
                     }
-                } else {
                 }
             } catch (err) {
                 console.log(`\x1b[31m[CRON] Error while checking: ${alert.id}:\x1b[0m`, err.message);

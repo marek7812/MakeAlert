@@ -1,6 +1,31 @@
+const fs = require('fs');
+const path = require('path');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
+
+async function saveScreenshot(page, label = '') {
+    if (!page) return null;
+    try {
+        const logDir = path.join(__dirname, 'log');
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+        }
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const safeLabel = String(label)
+            .replace(/[^a-zA-Z0-9_-]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '')
+            .slice(0, 40);
+        const fileName = safeLabel ? `error-${timestamp}-${safeLabel}.png` : `error-${timestamp}.png`;
+        const filePath = path.join(logDir, fileName);
+        await page.screenshot({ path: filePath, fullPage: true });
+        return filePath;
+    } catch (screenshotErr) {
+        console.error('Failed to save error screenshot:', screenshotErr.message);
+        return null;
+    }
+}
 
 async function findPriceSelector(url, targetPrice) {
     console.log(`Processing request for: ${url}`);
@@ -168,7 +193,7 @@ async function findPriceSelector(url, targetPrice) {
     }
 }
 
-async function checkPrice(url, selector) {
+async function checkPrice(url, selector, alertName = '') {
     const browser = await puppeteer.launch({
         headless: 'new',
         args: [
@@ -179,8 +204,9 @@ async function checkPrice(url, selector) {
         ]
     });
 
+    let page = null;
     try {
-        const page = await browser.newPage();
+        page = await browser.newPage();
         await page.setViewport({ width: 1920, height: 1080 });
 
         const rawUa = await browser.userAgent();
@@ -203,15 +229,13 @@ async function checkPrice(url, selector) {
             await page.waitForNetworkIdle({ idleTime: 1000, timeout: 6000 });
         } catch (_) {}
         await new Promise(r => setTimeout(r, 1000));
-        
-        let priceText = await page.evaluate((sel) => {
-            const metaTags = document.querySelectorAll('meta[property="product:price:amount"], meta[itemprop="price"], meta[name="product:price:amount"]');
-            for (const meta of Array.from(metaTags)) {
-                if (meta.content) return String(meta.content);
-            }
-
+        const evalResult = await page.evaluate((sel) => {
             // Parser
             const ldScripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+            let hasAvailableOffer = false;
+            let hasUnavailableOffer = false;
+            let jsonLdPrice = null;
+
             for (const script of ldScripts) {
                 try {
                     const data = JSON.parse(script.textContent);
@@ -223,13 +247,35 @@ async function checkPrice(url, selector) {
                             if (node && node.offers) {
                                 const offerList = Array.isArray(node.offers) ? node.offers : [node.offers];
                                 for (const offer of offerList) {
-                                    const p = offer.price || offer.lowPrice || (offer.priceSpecification && offer.priceSpecification.price);
-                                    if (p) return String(p);
+                                    if (!offer || typeof offer !== 'object') continue;
+                                    const avail = String(offer.availability || '');
+                                    if (/InStock|PreOrder|LimitedAvailability|OnlineOnly|InStoreOnly/i.test(avail)) {
+                                        hasAvailableOffer = true;
+                                    } else if (/OutOfStock|Discontinued|SoldOut/i.test(avail)) {
+                                        hasUnavailableOffer = true;
+                                    }
+                                    if (!jsonLdPrice) {
+                                        const p = offer.price || offer.lowPrice || (offer.priceSpecification && offer.priceSpecification.price);
+                                        if (p) jsonLdPrice = String(p);
+                                    }
                                 }
                             }
                         }
                     }
-                } catch(e) {}
+                } catch (e) {}
+            }
+
+            if (hasUnavailableOffer && !hasAvailableOffer) {
+                return { unavailable: true, priceText: null };
+            }
+
+            const metaTags = document.querySelectorAll('meta[property="product:price:amount"], meta[itemprop="price"], meta[name="product:price:amount"]');
+            for (const meta of Array.from(metaTags)) {
+                if (meta.content) return { unavailable: false, priceText: String(meta.content) };
+            }
+
+            if (jsonLdPrice) {
+                return { unavailable: false, priceText: jsonLdPrice };
             }
 
             // CSS Selector from DB
@@ -237,38 +283,72 @@ async function checkPrice(url, selector) {
                 const el = document.querySelector(sel);
                 if (el) {
                     const contentAttr = el.getAttribute('content');
-                    if (contentAttr) return String(contentAttr);
-                    return String(el.textContent);
+                    if (contentAttr) return { unavailable: false, priceText: String(contentAttr) };
+                    return { unavailable: false, priceText: String(el.textContent) };
                 }
             }
+
             const fallbackClasses = document.querySelectorAll('[itemprop="price"], .price, .cena, [data-price]');
             for (const fallback of Array.from(fallbackClasses)) {
                 const txt = fallback.textContent || fallback.getAttribute('content');
-                if (txt && /\d/.test(txt)) return String(txt);
+                if (txt && /\d/.test(txt)) return { unavailable: false, priceText: String(txt) };
             }
 
-            return null;
+            const bodyText = (document.body ? document.body.innerText : '').toLowerCase();
+            const unavailablePhrases = [
+                'produkt niedostępny',
+                'towar niedostępny',
+                'chwilowo niedostępny',
+                'czasowo niedostępny',
+                'obecnie niedostępny',
+                'brak w magazynie',
+                'brak towaru',
+                'wyprzedane',
+                'wyprzedany',
+                'produkt wycofany',
+                'oferta nieaktualna',
+                'ogłoszenie nieaktualne',
+                'powiadom o dostępności',
+                'out of stock',
+                'currently unavailable',
+                'sold out',
+                'discontinued'
+            ];
+
+            if (unavailablePhrases.some(phrase => bodyText.includes(phrase))) {
+                return { unavailable: true, priceText: null };
+            }
+
+            return { unavailable: false, priceText: null };
         }, selector);
 
-        if (!priceText) return null;
-        let cleanText = priceText.replace(/[\s\u00A0\u200B\u202F\uFEFF]/g, '');
-        if (cleanText.includes(',') && !cleanText.includes('.')) {
-            cleanText = cleanText.replace(',', '.');
+        if (evalResult.unavailable) {
+            return { status: 'UNAVAILABLE' };
         }
 
-        const matches = cleanText.match(/\d+(?:\.\d+)?/g);
-        if (!matches) return null;
+        if (evalResult.priceText) {
+            let cleanText = evalResult.priceText.replace(/[\s\u00A0\u200B\u202F\uFEFF]/g, '');
+            if (cleanText.includes(',') && !cleanText.includes('.')) {
+                cleanText = cleanText.replace(',', '.');
+            }
 
-        for (const m of matches) {
-            const val = parseFloat(m);
-            if (!isNaN(val)) return val;
+            const matches = cleanText.match(/\d+(?:\.\d+)?/g);
+            if (matches) {
+                for (const m of matches) {
+                    const val = parseFloat(m);
+                    if (!isNaN(val)) return { status: 'OK', price: val };
+                }
+            }
         }
 
-        return null;
+        const savedPath = await saveScreenshot(page, alertName);
+        console.log(`\x1b[33m[SCRAPER] Price not found for "${alertName || url}". Screenshot saved: ${savedPath}\x1b[0m`);
+        return { status: 'ERROR' };
 
     } catch (e) {
-        console.error('Error while price checking:', e.message);
-        return null;
+        const savedPath = await saveScreenshot(page, alertName);
+        console.error('Error while price checking:', e.message, savedPath ? `(Screenshot: ${savedPath})` : '');
+        return { status: 'ERROR' };
     } finally {
         await browser.close();
     }
