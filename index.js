@@ -119,13 +119,13 @@ client.once(Events.ClientReady, async () => {
                 }
 
                 const currentPrice = result.price;
+                db.prepare('INSERT INTO price_history (alert_id, price) VALUES (?, ?)').run(alert.id, currentPrice);
                 if (currentPrice !== alert.last_price) {
                     const isDrop = currentPrice < alert.last_price;
                     const status = isDrop ? '📉 Spadek ceny!' : '📈 Wzrost ceny!';
                     const color = isDrop ? '#57F287' : '#ED4245';
 
                     db.prepare('UPDATE alerts SET last_price = ? WHERE id = ?').run(currentPrice, alert.id);
-                    db.prepare('INSERT INTO price_history (alert_id, price) VALUES (?, ?)').run(alert.id, currentPrice);
                     const user = await client.users.fetch(alert.user_id).catch(() => null);
                     if (user) {
                         const embed = new EmbedBuilder()

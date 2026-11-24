@@ -4,6 +4,71 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
+function normalizeUrl(rawUrl) {
+    try {
+        const u = new URL(rawUrl);
+        if (u.hostname.includes('amazon.')) {
+            const asinMatch = u.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+            if (asinMatch) {
+                return `${u.origin}/dp/${asinMatch[1].toUpperCase()}`;
+            }
+        }
+    } catch (_) {}
+    return rawUrl;
+}
+
+async function preparePage(browser, targetUrl) {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
+
+    const rawUa = await browser.userAgent();
+    const cleanUa = rawUa.replace('HeadlessChrome', 'Chrome');
+    const versionMatch = cleanUa.match(/Chrome\/([\d.]+)/);
+    const fullVersion = versionMatch ? versionMatch[1] : '131.0.0.0';
+    const majorVersion = fullVersion.split('.')[0];
+
+    await page.setUserAgent(cleanUa, {
+        brands: [
+            { brand: 'Chromium', version: majorVersion },
+            { brand: 'Google Chrome', version: majorVersion },
+            { brand: 'Not_A Brand', version: '24' }
+        ],
+        fullVersion,
+        platform: process.platform === 'win32' ? 'Windows' : 'Linux',
+        platformVersion: '6.8.0',
+        architecture: 'x86',
+        model: '',
+        mobile: false
+    });
+
+    await page.setExtraHTTPHeaders({
+        'Accept-Language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7'
+    });
+
+    await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+
+    try {
+        const u = new URL(targetUrl);
+        if (u.hostname.includes('amazon.')) {
+            const cookies = await page.cookies(u.origin);
+            const hasSession = cookies.some(c => c.name === 'session-id');
+            if (!hasSession) {
+                await page.goto(u.origin, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+                await new Promise(r => setTimeout(r, 1200));
+                const acceptBtn = await page.$('#sp-cc-accept');
+                if (acceptBtn) {
+                    await acceptBtn.click().catch(() => {});
+                    await new Promise(r => setTimeout(r, 800));
+                }
+            }
+        }
+    } catch (_) {}
+
+    return page;
+}
+
 async function saveScreenshot(page, label = '') {
     if (!page) return null;
     try {
@@ -28,10 +93,12 @@ async function saveScreenshot(page, label = '') {
 }
 
 async function findPriceSelector(url, targetPrice) {
-    console.log(`Processing request for: ${url}`);
+    const cleanUrl = normalizeUrl(url);
+    console.log(`Processing request for: ${cleanUrl}`);
 
     const browser = await puppeteer.launch({
         headless: 'new',
+        userDataDir: path.join(__dirname, 'chrome_profile_add'),
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -41,17 +108,9 @@ async function findPriceSelector(url, targetPrice) {
     });
 
     try {
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1920, height: 1080 });
+        const page = await preparePage(browser, cleanUrl);
 
-        const rawUa = await browser.userAgent();
-        await page.setUserAgent(rawUa.replace('HeadlessChrome', 'Chrome'));
-
-        await page.evaluateOnNewDocument(() => {
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-        });
-
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
         try {
             await page.waitForNetworkIdle({ idleTime: 1000, timeout: 8000 });
@@ -194,8 +253,10 @@ async function findPriceSelector(url, targetPrice) {
 }
 
 async function checkPrice(url, selector, alertName = '') {
+    const cleanUrl = normalizeUrl(url);
     const browser = await puppeteer.launch({
         headless: 'new',
+        userDataDir: path.join(__dirname, 'chrome_profile'),
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -206,17 +267,9 @@ async function checkPrice(url, selector, alertName = '') {
 
     let page = null;
     try {
-        page = await browser.newPage();
-        await page.setViewport({ width: 1920, height: 1080 });
+        page = await preparePage(browser, cleanUrl);
 
-        const rawUa = await browser.userAgent();
-        await page.setUserAgent(rawUa.replace('HeadlessChrome', 'Chrome'));
-
-        await page.evaluateOnNewDocument(() => {
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-        });
-
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 35000 });
+        await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
         await page.evaluate(() => {
             window.scrollBy(0, 500);
         });
@@ -342,7 +395,7 @@ async function checkPrice(url, selector, alertName = '') {
         }
 
         const savedPath = await saveScreenshot(page, alertName);
-        console.log(`\x1b[33m[SCRAPER] Price not found for "${alertName || url}". Screenshot saved: ${savedPath}\x1b[0m`);
+        console.log(`\x1b[33m[SCRAPER] Price not found for "${alertName || cleanUrl}". Screenshot saved: ${savedPath}\x1b[0m`);
         return { status: 'ERROR' };
 
     } catch (e) {

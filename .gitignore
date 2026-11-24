@@ -1,4 +1,5 @@
 node_modules/
+chrome_profile*/
 .env
 data.db
 data.db-wal
